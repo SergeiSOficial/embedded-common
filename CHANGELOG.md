@@ -5,6 +5,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+ * [`added`] Shdlc implementation. This implementation was immigrated from the
+             `embedded-uart-sps` repo. Since it's general code which could be used
+             by multiple sensors it makes more sense to interate it here. The
+             Shdlc part also uses the files in `common/`. In addition to that
+             it adds two `.h/.c` file pairs. First `sensirion_shdlc.h/c` which
+             contains the shdlc implementation for Sensirion sensors. Sencondly
+             `sensirion_uart_hal.h` and `sensirion_uart_implementation.c` which
+             describe the hardware abstraction layer used by `sensirion_shdlc.c`.
+             This hal can be implemented in `sensirion_uart_implentation.c` for
+             the platform the sensor will be used on.
  * [`changed`] Structure of embedded-common. File names should be more logical
                and the spliting of the different parts of the code as well.
                Embedded-common now splites the code into three `.h/.c` file pairs
