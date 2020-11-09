@@ -35,6 +35,11 @@
 #include "sensirion_i2c.h"
 
 
+#define I2C_SEND_TIMEOUT_RXNE_MS 5
+#define I2C_SEND_TIMEOUT_TXIS_MS 5
+#define I2C_SEND_TIMEOUT_SB_MS        5
+#define I2C_SEND_TIMEOUT_ADDR_MS      5
+
 /**
  * Initialize all hard- and software components that are needed for the I2C
  * communication.
@@ -98,8 +103,43 @@ void sensirion_i2c_release(void) {
  * @returns 0 on success, error code otherwise
  */
 int8_t sensirion_i2c_read(uint8_t address, uint8_t* data, uint16_t count) {
-    return (int8_t)HAL_I2C_Master_Receive(&hi2c1, (uint16_t)(address << 1),
-                                          data, count, 100);
+
+  uint32_t Timeout = I2C_SEND_TIMEOUT_RXNE_MS;
+  uint16_t ubReceiveIndex = 0;
+
+  LL_I2C_HandleTransfer(I2C1, address, LL_I2C_ADDRSLAVE_7BIT, 1, LL_I2C_MODE_AUTOEND, LL_I2C_GENERATE_START_READ);
+  /* Loop until STOP flag is raised  */
+  while(!LL_I2C_IsActiveFlag_STOP(I2C1) && (ubReceiveIndex < count))
+  {
+    /* (2.1) Receive data (RXNE flag raised) **********************************/
+
+    /* Check RXNE flag value in ISR register */
+    if(LL_I2C_IsActiveFlag_RXNE(I2C1))
+    {
+      /* Read character in Receive Data register.
+      RXNE flag is cleared by reading data in RXDR register */
+      data[ubReceiveIndex++] = LL_I2C_ReceiveData8(I2C1);
+
+      Timeout = I2C_SEND_TIMEOUT_RXNE_MS;
+    }
+
+    /* Check Systick counter flag to decrement the time-out value */
+    if (LL_SYSTICK_IsActiveCounterFlag())
+    {
+      if(Timeout-- == 0)
+      {
+          return true;
+      }
+    }
+  }
+
+  /* (3) Clear pending flags, Check Data consistency **************************/
+
+  /* End of I2C_SlaveReceiver_MasterTransmitter_DMA Process */
+  LL_I2C_ClearFlag_STOP(I2C1);
+  return 0;
+//    return (int8_t)HAL_I2C_Master_Receive(&hi2c1, (uint16_t)(address << 1),
+//                                          data, count, 100);
 }
 
 /**
@@ -115,8 +155,52 @@ int8_t sensirion_i2c_read(uint8_t address, uint8_t* data, uint16_t count) {
  */
 int8_t sensirion_i2c_write(uint8_t address, const uint8_t* data,
                            uint16_t count) {
-    return (int8_t)HAL_I2C_Master_Transmit(&hi2c1, (uint16_t)(address << 1),
-                                           (uint8_t*)data, count, 100);
+
+      /* (1) Initiate a Start condition to the Slave device ***********************/
+      uint16_t  ubNbDataToTransmit = 0;
+      /* Master Generate Start condition for a write request :              */
+      /*    - to the Slave with a 7-Bit address                             */
+      /*    - with a auto stop condition generation when transmit all bytes */
+      LL_I2C_HandleTransfer(I2C1, address, LL_I2C_ADDRSLAVE_7BIT, 1, LL_I2C_MODE_AUTOEND, LL_I2C_GENERATE_START_WRITE);
+
+      /* (2) Loop until end of transfer received (STOP flag raised) ***************/
+
+      uint32_t Timeout = I2C_SEND_TIMEOUT_TXIS_MS;
+
+      /* Loop until STOP flag is raised  */
+      while(!LL_I2C_IsActiveFlag_STOP(I2C1) && (ubNbDataToTransmit < count))
+      {
+        /* (2.1) Transmit data (TXIS flag raised) *********************************/
+
+        /* Check TXIS flag value in ISR register */
+        if(LL_I2C_IsActiveFlag_TXIS(I2C1))
+        {
+          /* Write data in Transmit Data register.
+          TXIS flag is cleared by writing data in TXDR register */
+          LL_I2C_TransmitData8(I2C1, (*data++));
+          ubNbDataToTransmit++;
+
+          Timeout = I2C_SEND_TIMEOUT_TXIS_MS;
+        }
+
+        /* Check Systick counter flag to decrement the time-out value */
+        if (LL_SYSTICK_IsActiveCounterFlag())
+        {
+          if(Timeout-- == 0)
+          {
+              return true;
+          }
+        }
+      }
+
+      /* (3) Clear pending flags, Data consistency are checking into Slave process */
+
+      /* End of I2C_SlaveReceiver_MasterTransmitter Process */
+      LL_I2C_ClearFlag_STOP(I2C1);
+
+      return 0;
+//    return (int8_t)HAL_I2C_Master_Transmit(&hi2c1, (uint16_t)(address << 1),
+//                                           (uint8_t*)data, count, 100);
 }
 
 /**
@@ -127,19 +211,5 @@ int8_t sensirion_i2c_write(uint8_t address, const uint8_t* data,
  */
 void sensirion_sleep_usec(uint32_t useconds) {
     uint32_t msec = useconds / 1000;
-    if (useconds % 1000 > 0) {
-        msec++;
-    }
-
-    /*
-     * Increment by 1 if STM32F1 driver version less than 1.1.1
-     * Old firmwares of STM32F1 sleep 1ms shorter than specified in HAL_Delay.
-     * This was fixed with firmware 1.6 (driver version 1.1.1), so we have to
-     * fix it ourselves for older firmwares
-     */
-    if (HAL_GetHalVersion() < 0x01010100) {
-        msec++;
-    }
-
-    HAL_Delay(msec);
+    LL_mDelay(msec);
 }
