@@ -44,6 +44,7 @@ uint32_t* pMasterTransmitBuffer;
 uint32_t Timeout = 0; /* Variable used for Timeout management */
 
 __IO uint8_t ubMasterTransferComplete = 0;
+__IO uint8_t ubMasterReceiveComplete = 0;
 
 void Configure_DMA(void);
 
@@ -93,6 +94,7 @@ void sensirion_i2c_init(void) {
     LL_I2C_EnableDMAReq_RX(I2C1);
     LL_I2C_EnableDMAReq_TX(I2C1);
     LL_I2C_Enable(I2C1);
+
 }
 
 /**
@@ -113,12 +115,12 @@ void sensirion_i2c_release(void) {
  */
 int8_t sensirion_i2c_read(uint8_t address, uint8_t* data, uint16_t count) {
 
-    sensirion_sleep_usec(1000);
     address = (address << 1) & 0xff;
-
+ubMasterReceiveComplete = 0;
     /* (6) Configure DMA to receive data from slave
      * *****************************/
-    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_6);
+    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_7);
+    LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_7, (uint32_t)(data));
     LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_7, count);
     LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_7);
 
@@ -138,7 +140,7 @@ int8_t sensirion_i2c_read(uint8_t address, uint8_t* data, uint16_t count) {
     Timeout = I2C_SEND_TIMEOUT_STOP_MS;
 
     /* Loop until STOP flag is raised  */
-    while (!LL_I2C_IsActiveFlag_STOP(I2C1)) {
+    while ((!LL_I2C_IsActiveFlag_STOP(I2C1))||(ubMasterReceiveComplete == 0)) {
         /* Check Systick counter flag to decrement the time-out value */
         if (LL_SYSTICK_IsActiveCounterFlag()) {
             if (Timeout-- == 0) {
@@ -146,12 +148,21 @@ int8_t sensirion_i2c_read(uint8_t address, uint8_t* data, uint16_t count) {
             }
         }
     }
-    memcpy_s(data, count, aMasterReceiveBuffer, count);
+
+
+    LL_I2C_ClearFlag_STOP(I2C1);
+
+    //sensirion_sleep_usec(1000);
+//    for(uint8_t i =0; i <count;i++)
+//    {
+//        data[i] = aMasterReceiveBuffer[i];
+//    }
+    //memcpy_s(data, count, aMasterReceiveBuffer, count);
     /* (9) Clear pending flags, Data Command Code are checking into Slave
      * process */
     /* End of Master Process */
-    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_7);
-    LL_I2C_ClearFlag_STOP(I2C1);
+//    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_7);
+
 
     return 0;
     //    return (int8_t)HAL_I2C_Master_Receive(&hi2c1, (uint16_t)(address <<
@@ -176,17 +187,17 @@ int8_t sensirion_i2c_write(uint8_t address, const uint8_t* data,
     /* (1) Configure DMA parameters for Command Code transfer
      * *******************/
     pMasterTransmitBuffer = (uint32_t*)data;  //(uint32_t*)(&aCommandCode[ubMasterCommandIndex][0]);
-    __IO uint8_t ubMasterNbDataToTransmit =
-        count;  // strlen((char *)pMasterTransmitBuffer[0]);
+    __IO uint8_t ubMasterNbDataToTransmit =        count;  // strlen((char *)pMasterTransmitBuffer[0]);
     address = (address << 1) & 0xff;
 
+    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_6);
     LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_6,
                             (uint32_t)(pMasterTransmitBuffer));
     LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_6, ubMasterNbDataToTransmit);
-
+    LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_6);
     /* (2) Enable DMA transfer
      * **************************************************/
-    LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_6);
+//    LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_6);
 
     /* (3) Initiate a Start condition to the Slave device
      * ***********************/
@@ -199,7 +210,7 @@ int8_t sensirion_i2c_write(uint8_t address, const uint8_t* data,
      */
     LL_I2C_HandleTransfer(I2C1, address, LL_I2C_ADDRSLAVE_7BIT,
                           ubMasterNbDataToTransmit, LL_I2C_MODE_AUTOEND,
-                          LL_I2C_GENERATE_START_WRITE);
+                          LL_I2C_GENERATE_RESTART_7BIT_WRITE);
 
     /* (4) Loop until end of transfer completed (DMA TC raised)
      * *****************/
@@ -233,7 +244,7 @@ int8_t sensirion_i2c_write(uint8_t address, const uint8_t* data,
     /* (6) Clear pending flags, Data Command Code are checking into Slave
      * process */
     /* End of Master Process */
-    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_6);
+//    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_6);
     LL_I2C_ClearFlag_STOP(I2C1);
 
     /* Clear and Reset process variables and arrays */
@@ -254,6 +265,17 @@ int8_t sensirion_i2c_write(uint8_t address, const uint8_t* data,
 void Transfer_Complete_Callback() {
     /* DMA transfer completed */
     ubMasterTransferComplete = 1;
+}
+
+/**
+ * @brief  DMA transfer complete callback
+ * @note   This function is executed when the transfer complete interrupt
+ *         is generated
+ * @retval None
+ */
+void Receive_Complete_Callback() {
+    /* DMA transfer completed */
+    ubMasterReceiveComplete = 1;
 }
 
 /**
@@ -359,7 +381,7 @@ void DMA1_Channel7_IRQHandler(void) {
     /* USER CODE BEGIN DMA1_Channel7_IRQn 0 */
     if (LL_DMA_IsActiveFlag_TC7(DMA1)) {
         LL_DMA_ClearFlag_TC7(DMA1);
-        Transfer_Complete_Callback();
+        Receive_Complete_Callback();
     } else if (LL_DMA_IsActiveFlag_TE7(DMA1)) {
         LL_DMA_ClearFlag_TE7(DMA1);
         Transfer_Error_Callback();
