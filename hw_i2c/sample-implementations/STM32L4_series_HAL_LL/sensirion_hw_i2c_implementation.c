@@ -33,57 +33,66 @@
 
 #include "sensirion_arch_config.h"
 #include "sensirion_i2c.h"
+#include <string.h>
 
+#define DMA_SEND_TIMEOUT_TC_MS 5
+#define I2C_SEND_TIMEOUT_TC_MS 2
+#define I2C_SEND_TIMEOUT_STOP_MS 5
+uint8_t aMasterReceiveBuffer[0xff] = {0};
+uint32_t* pMasterTransmitBuffer;
 
-#define I2C_SEND_TIMEOUT_RXNE_MS 5
-#define I2C_SEND_TIMEOUT_TXIS_MS 5
-#define I2C_SEND_TIMEOUT_SB_MS        5
-#define I2C_SEND_TIMEOUT_ADDR_MS      5
+uint32_t Timeout = 0; /* Variable used for Timeout management */
+
+__IO uint8_t ubMasterTransferComplete = 0;
+
+void Configure_DMA(void);
 
 /**
  * Initialize all hard- and software components that are needed for the I2C
  * communication.
  */
 void sensirion_i2c_init(void) {
-    MX_I2C1_Init();
-//main init via CubeMX or
-//    LL_I2C_InitTypeDef I2C_InitStruct = {0};
-//
-//    LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
-//
-//    LL_AHB2_GRP1_EnableClock(LL_AHB2_GRP1_PERIPH_GPIOA);
-//    /**I2C1 GPIO Configuration
-//    PA9   ------> I2C1_SCL
-//    PA10   ------> I2C1_SDA
-//    */
-//    GPIO_InitStruct.Pin = LL_GPIO_PIN_9|LL_GPIO_PIN_10;
-//    GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
-//    GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_VERY_HIGH;
-//    GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_OPENDRAIN;
-//    GPIO_InitStruct.Pull = LL_GPIO_PULL_UP;
-//    GPIO_InitStruct.Alternate = LL_GPIO_AF_4;
-//    LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-//
-//    /* Peripheral clock enable */
-//    LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_I2C1);
-//
-//    /** I2C Initialization
-//    */
-//    LL_I2C_EnableAutoEndMode(I2C1);
-//    LL_I2C_DisableOwnAddress2(I2C1);
-//    LL_I2C_DisableGeneralCall(I2C1);
-//    LL_I2C_EnableClockStretching(I2C1);
-//    I2C_InitStruct.PeripheralMode = LL_I2C_MODE_I2C;
-//    I2C_InitStruct.Timing = 0x2000090E;
-//    I2C_InitStruct.AnalogFilter = LL_I2C_ANALOGFILTER_ENABLE;
-//    I2C_InitStruct.DigitalFilter = 0;
-//    I2C_InitStruct.OwnAddress1 = 0;
-//    I2C_InitStruct.TypeAcknowledge = LL_I2C_ACK;
-//    I2C_InitStruct.OwnAddrSize = LL_I2C_OWNADDRESS1_7BIT;
-//    LL_I2C_Init(I2C1, &I2C_InitStruct);
-//    LL_I2C_SetOwnAddress2(I2C1, 0, LL_I2C_OWNADDRESS2_NOMASK);
-
-        LL_I2C_Enable(I2C1);
+    // MX_I2C1_Init();
+    // main init via CubeMX or
+    //    LL_I2C_InitTypeDef I2C_InitStruct = {0};
+    //
+    //    LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
+    //
+    //    LL_AHB2_GRP1_EnableClock(LL_AHB2_GRP1_PERIPH_GPIOA);
+    //    /**I2C1 GPIO Configuration
+    //    PA9   ------> I2C1_SCL
+    //    PA10   ------> I2C1_SDA
+    //    */
+    //    GPIO_InitStruct.Pin = LL_GPIO_PIN_9|LL_GPIO_PIN_10;
+    //    GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
+    //    GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_VERY_HIGH;
+    //    GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_OPENDRAIN;
+    //    GPIO_InitStruct.Pull = LL_GPIO_PULL_UP;
+    //    GPIO_InitStruct.Alternate = LL_GPIO_AF_4;
+    //    LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    //
+    //    /* Peripheral clock enable */
+    //    LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_I2C1);
+    //
+    //    /** I2C Initialization
+    //    */
+    //    LL_I2C_EnableAutoEndMode(I2C1);
+    //    LL_I2C_DisableOwnAddress2(I2C1);
+    //    LL_I2C_DisableGeneralCall(I2C1);
+    //    LL_I2C_EnableClockStretching(I2C1);
+    //    I2C_InitStruct.PeripheralMode = LL_I2C_MODE_I2C;
+    //    I2C_InitStruct.Timing = 0x2000090E;
+    //    I2C_InitStruct.AnalogFilter = LL_I2C_ANALOGFILTER_ENABLE;
+    //    I2C_InitStruct.DigitalFilter = 0;
+    //    I2C_InitStruct.OwnAddress1 = 0;
+    //    I2C_InitStruct.TypeAcknowledge = LL_I2C_ACK;
+    //    I2C_InitStruct.OwnAddrSize = LL_I2C_OWNADDRESS1_7BIT;
+    //    LL_I2C_Init(I2C1, &I2C_InitStruct);
+    //    LL_I2C_SetOwnAddress2(I2C1, 0, LL_I2C_OWNADDRESS2_NOMASK);
+    Configure_DMA();
+    LL_I2C_EnableDMAReq_RX(I2C1);
+    LL_I2C_EnableDMAReq_TX(I2C1);
+    LL_I2C_Enable(I2C1);
 }
 
 /**
@@ -104,42 +113,50 @@ void sensirion_i2c_release(void) {
  */
 int8_t sensirion_i2c_read(uint8_t address, uint8_t* data, uint16_t count) {
 
-  uint32_t Timeout = I2C_SEND_TIMEOUT_RXNE_MS;
-  uint16_t ubReceiveIndex = 0;
+    sensirion_sleep_usec(1000);
+    address = (address << 1) & 0xff;
 
-  LL_I2C_HandleTransfer(I2C1, address, LL_I2C_ADDRSLAVE_7BIT, 1, LL_I2C_MODE_AUTOEND, LL_I2C_GENERATE_START_READ);
-  /* Loop until STOP flag is raised  */
-  while(!LL_I2C_IsActiveFlag_STOP(I2C1) && (ubReceiveIndex < count))
-  {
-    /* (2.1) Receive data (RXNE flag raised) **********************************/
+    /* (6) Configure DMA to receive data from slave
+     * *****************************/
+    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_6);
+    LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_7, count);
+    LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_7);
 
-    /* Check RXNE flag value in ISR register */
-    if(LL_I2C_IsActiveFlag_RXNE(I2C1))
-    {
-      /* Read character in Receive Data register.
-      RXNE flag is cleared by reading data in RXDR register */
-      data[ubReceiveIndex++] = LL_I2C_ReceiveData8(I2C1);
 
-      Timeout = I2C_SEND_TIMEOUT_RXNE_MS;
+    /* (7) Initiate a ReStart condition to the Slave device
+     * *********************/
+    /* Master Generate Start condition for a write request:
+     *    - to the Slave with a 7-Bit SLAVE_OWN_ADDRESS
+     *    - with a auto stop condition generation when transmit all bytes
+     */
+    LL_I2C_HandleTransfer(I2C1, address, LL_I2C_ADDRSLAVE_7BIT, count,
+                          LL_I2C_MODE_AUTOEND,
+                          LL_I2C_GENERATE_START_READ);
+
+    /* (8) Loop until end of master process completed (STOP flag raised)
+     * ********/
+    Timeout = I2C_SEND_TIMEOUT_STOP_MS;
+
+    /* Loop until STOP flag is raised  */
+    while (!LL_I2C_IsActiveFlag_STOP(I2C1)) {
+        /* Check Systick counter flag to decrement the time-out value */
+        if (LL_SYSTICK_IsActiveCounterFlag()) {
+            if (Timeout-- == 0) {
+                return 1;
+            }
+        }
     }
+    memcpy_s(data, count, aMasterReceiveBuffer, count);
+    /* (9) Clear pending flags, Data Command Code are checking into Slave
+     * process */
+    /* End of Master Process */
+    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_7);
+    LL_I2C_ClearFlag_STOP(I2C1);
 
-    /* Check Systick counter flag to decrement the time-out value */
-    if (LL_SYSTICK_IsActiveCounterFlag())
-    {
-      if(Timeout-- == 0)
-      {
-          return true;
-      }
-    }
-  }
-
-  /* (3) Clear pending flags, Check Data consistency **************************/
-
-  /* End of I2C_SlaveReceiver_MasterTransmitter_DMA Process */
-  LL_I2C_ClearFlag_STOP(I2C1);
-  return 0;
-//    return (int8_t)HAL_I2C_Master_Receive(&hi2c1, (uint16_t)(address << 1),
-//                                          data, count, 100);
+    return 0;
+    //    return (int8_t)HAL_I2C_Master_Receive(&hi2c1, (uint16_t)(address <<
+    //    1),
+    //                                          data, count, 100);
 }
 
 /**
@@ -156,53 +173,99 @@ int8_t sensirion_i2c_read(uint8_t address, uint8_t* data, uint16_t count) {
 int8_t sensirion_i2c_write(uint8_t address, const uint8_t* data,
                            uint16_t count) {
 
-      /* (1) Initiate a Start condition to the Slave device ***********************/
-      uint16_t  ubNbDataToTransmit = 0;
-      /* Master Generate Start condition for a write request :              */
-      /*    - to the Slave with a 7-Bit address                             */
-      /*    - with a auto stop condition generation when transmit all bytes */
-      LL_I2C_HandleTransfer(I2C1, address, LL_I2C_ADDRSLAVE_7BIT, 1, LL_I2C_MODE_AUTOEND, LL_I2C_GENERATE_START_WRITE);
+    /* (1) Configure DMA parameters for Command Code transfer
+     * *******************/
+    pMasterTransmitBuffer = (uint32_t*)data;  //(uint32_t*)(&aCommandCode[ubMasterCommandIndex][0]);
+    __IO uint8_t ubMasterNbDataToTransmit =
+        count;  // strlen((char *)pMasterTransmitBuffer[0]);
+    address = (address << 1) & 0xff;
 
-      /* (2) Loop until end of transfer received (STOP flag raised) ***************/
+    LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_6,
+                            (uint32_t)(pMasterTransmitBuffer));
+    LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_6, ubMasterNbDataToTransmit);
 
-      uint32_t Timeout = I2C_SEND_TIMEOUT_TXIS_MS;
+    /* (2) Enable DMA transfer
+     * **************************************************/
+    LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_6);
 
-      /* Loop until STOP flag is raised  */
-      while(!LL_I2C_IsActiveFlag_STOP(I2C1) && (ubNbDataToTransmit < count))
-      {
-        /* (2.1) Transmit data (TXIS flag raised) *********************************/
+    /* (3) Initiate a Start condition to the Slave device
+     * ***********************/
 
-        /* Check TXIS flag value in ISR register */
-        if(LL_I2C_IsActiveFlag_TXIS(I2C1))
-        {
-          /* Write data in Transmit Data register.
-          TXIS flag is cleared by writing data in TXDR register */
-          LL_I2C_TransmitData8(I2C1, (*data++));
-          ubNbDataToTransmit++;
+    /* Master Generate Start condition for a write request:
+     *  - to the Slave with a 7-Bit SLAVE_OWN_ADDRESS
+     *  - with a auto stop condition generation when transmit all bytes
+     *  - No specific answer is needed from Slave Device, configure auto-stop
+     * condition
+     */
+    LL_I2C_HandleTransfer(I2C1, address, LL_I2C_ADDRSLAVE_7BIT,
+                          ubMasterNbDataToTransmit, LL_I2C_MODE_AUTOEND,
+                          LL_I2C_GENERATE_START_WRITE);
 
-          Timeout = I2C_SEND_TIMEOUT_TXIS_MS;
-        }
+    /* (4) Loop until end of transfer completed (DMA TC raised)
+     * *****************/
 
+    Timeout = DMA_SEND_TIMEOUT_TC_MS;
+
+    /* Loop until DMA transfer complete event */
+    while (!ubMasterTransferComplete) {
         /* Check Systick counter flag to decrement the time-out value */
-        if (LL_SYSTICK_IsActiveCounterFlag())
-        {
-          if(Timeout-- == 0)
-          {
-              return true;
-          }
+        if (LL_SYSTICK_IsActiveCounterFlag()) {
+            if (Timeout-- == 0) {
+                return 1;
+            }
         }
-      }
+    }
 
-      /* (3) Clear pending flags, Data consistency are checking into Slave process */
+    /* (5) Loop until end of master process completed (STOP flag raised)
+     * ********/
+    Timeout = I2C_SEND_TIMEOUT_STOP_MS;
 
-      /* End of I2C_SlaveReceiver_MasterTransmitter Process */
-      LL_I2C_ClearFlag_STOP(I2C1);
+    /* Loop until STOP flag is raised  */
+    while (!LL_I2C_IsActiveFlag_STOP(I2C1)) {
+        /* Check Systick counter flag to decrement the time-out value */
+        if (LL_SYSTICK_IsActiveCounterFlag()) {
+            if (Timeout-- == 0) {
+                return 1;
+            }
+        }
+    }
 
-      return 0;
-//    return (int8_t)HAL_I2C_Master_Transmit(&hi2c1, (uint16_t)(address << 1),
-//                                           (uint8_t*)data, count, 100);
+    /* (6) Clear pending flags, Data Command Code are checking into Slave
+     * process */
+    /* End of Master Process */
+    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_6);
+    LL_I2C_ClearFlag_STOP(I2C1);
+
+    /* Clear and Reset process variables and arrays */
+    ubMasterTransferComplete = 0;
+
+    return 0;
+    //    return (int8_t)HAL_I2C_Master_Transmit(&hi2c1, (uint16_t)(address <<
+    //    1),
+    //                                           (uint8_t*)data, count, 100);
 }
 
+/**
+ * @brief  DMA transfer complete callback
+ * @note   This function is executed when the transfer complete interrupt
+ *         is generated
+ * @retval None
+ */
+void Transfer_Complete_Callback() {
+    /* DMA transfer completed */
+    ubMasterTransferComplete = 1;
+}
+
+/**
+ * @brief  DMA transfer error callback
+ * @note   This function is executed when the transfer error interrupt
+ *         is generated during DMA transfer
+ * @retval None
+ */
+void Transfer_Error_Callback() {
+    /* Disable DMA1_Channel6_IRQn */
+    // NVIC_DisableIRQ(DMA1_Channel6_IRQn);
+}
 /**
  * Sleep for a given number of microseconds. The function should delay the
  * execution for at least the given time, but may also sleep longer.
@@ -212,4 +275,98 @@ int8_t sensirion_i2c_write(uint8_t address, const uint8_t* data,
 void sensirion_sleep_usec(uint32_t useconds) {
     uint32_t msec = useconds / 1000;
     LL_mDelay(msec);
+}
+
+/**
+ * @brief  This function configures the DMA Channels for I2C1(TXDR) and
+ * I2C1(RXDR).
+ * @note   This function is used to :
+ *         -1- Enable the clock of DMA1.
+ *         -2- Configure NVIC for DMA1_Channel2 and DMA1_Channel3.
+ *         -3- Configure the DMA functional parameters for Master Transmit.
+ *         -4- Configure the DMA functional parameters for Master Receive.
+ *         -5- Enable DMA1 interrupts complete/error.
+ * @param   None
+ * @retval  None
+ */
+void Configure_DMA(void) {
+    /* (1) Enable the clock of DMA1 */
+    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA1);
+
+    /* (2) Configure NVIC for DMA1_Channel2 and DMA1_Channel3 */
+    NVIC_SetPriority(DMA1_Channel6_IRQn, 0x4);
+    NVIC_EnableIRQ(DMA1_Channel6_IRQn);
+    NVIC_SetPriority(DMA1_Channel7_IRQn, 0x1);
+    NVIC_EnableIRQ(DMA1_Channel7_IRQn);
+
+    /* (3) Configure the DMA functional parameters for Master Transmit */
+//    LL_DMA_ConfigTransfer(DMA1, LL_DMA_CHANNEL_6,
+//                          LL_DMA_DIRECTION_MEMORY_TO_PERIPH |
+//                              LL_DMA_PRIORITY_HIGH | LL_DMA_MODE_NORMAL |
+//                              LL_DMA_PERIPH_NOINCREMENT |
+//                              LL_DMA_MEMORY_INCREMENT | LL_DMA_PDATAALIGN_BYTE |
+//                              LL_DMA_MDATAALIGN_BYTE);
+    LL_DMA_ConfigAddresses(
+        DMA1, LL_DMA_CHANNEL_6, (uint32_t)(*pMasterTransmitBuffer),
+        (uint32_t)LL_I2C_DMA_GetRegAddr(I2C1, LL_I2C_DMA_REG_DATA_TRANSMIT),
+        LL_DMA_GetDataTransferDirection(DMA1, LL_DMA_CHANNEL_6));
+//    LL_DMA_SetPeriphRequest(DMA1, LL_DMA_CHANNEL_6, LL_DMA_REQUEST_3);
+
+    /* (4) Configure the DMA functional parameters for Master Receive */
+//    LL_DMA_ConfigTransfer(DMA1, LL_DMA_CHANNEL_7,
+//                          LL_DMA_DIRECTION_PERIPH_TO_MEMORY |
+//                              LL_DMA_PRIORITY_HIGH | LL_DMA_MODE_NORMAL |
+//                              LL_DMA_PERIPH_NOINCREMENT |
+//                              LL_DMA_MEMORY_INCREMENT | LL_DMA_PDATAALIGN_BYTE |
+//                              LL_DMA_MDATAALIGN_BYTE);
+    LL_DMA_ConfigAddresses(
+        DMA1, LL_DMA_CHANNEL_7,
+        (uint32_t)LL_I2C_DMA_GetRegAddr(I2C1, LL_I2C_DMA_REG_DATA_RECEIVE),
+        (uint32_t) & (aMasterReceiveBuffer),
+        LL_DMA_GetDataTransferDirection(DMA1, LL_DMA_CHANNEL_7));
+//    LL_DMA_SetPeriphRequest(DMA1, LL_DMA_CHANNEL_7, LL_DMA_REQUEST_3);
+
+    /* (5) Enable DMA1 interrupts complete/error */
+    LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_6);
+    LL_DMA_EnableIT_TE(DMA1, LL_DMA_CHANNEL_6);
+    LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_7);
+    LL_DMA_EnableIT_TE(DMA1, LL_DMA_CHANNEL_7);
+}
+
+/**
+ * @brief This function handles DMA1 channel6 global interrupt.
+ */
+void DMA1_Channel6_IRQHandler(void) {
+    /* USER CODE BEGIN DMA1_Channel6_IRQn 0 */
+    if (LL_DMA_IsActiveFlag_TC6(DMA1)) {
+        LL_DMA_ClearFlag_TC6(DMA1);
+        Transfer_Complete_Callback();
+    } else if (LL_DMA_IsActiveFlag_TE6(DMA1)) {
+        LL_DMA_ClearFlag_TE6(DMA1);
+        Transfer_Error_Callback();
+    }
+    /* USER CODE END DMA1_Channel6_IRQn 0 */
+
+    /* USER CODE BEGIN DMA1_Channel6_IRQn 1 */
+
+    /* USER CODE END DMA1_Channel6_IRQn 1 */
+}
+
+/**
+ * @brief This function handles DMA1 channel7 global interrupt.
+ */
+void DMA1_Channel7_IRQHandler(void) {
+    /* USER CODE BEGIN DMA1_Channel7_IRQn 0 */
+    if (LL_DMA_IsActiveFlag_TC7(DMA1)) {
+        LL_DMA_ClearFlag_TC7(DMA1);
+        Transfer_Complete_Callback();
+    } else if (LL_DMA_IsActiveFlag_TE7(DMA1)) {
+        LL_DMA_ClearFlag_TE7(DMA1);
+        Transfer_Error_Callback();
+    }
+    /* USER CODE END DMA1_Channel7_IRQn 0 */
+
+    /* USER CODE BEGIN DMA1_Channel7_IRQn 1 */
+
+    /* USER CODE END DMA1_Channel7_IRQn 1 */
 }
